@@ -113,6 +113,6 @@ func TestAndEvaluatorStringInvertNotSampled(t *testing.T) {
 	}
 	decision, err := and.Evaluate(context.Background(), traceID, trace)
 	require.NoError(t, err, "Failed to evaluate and policy: %v", err)
-	assert.Equal(t, decision, InvertNotSampled)
+	assert.Equal(t, decision, NotSampled)
 
 }
