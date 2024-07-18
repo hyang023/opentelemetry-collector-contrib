@@ -58,6 +58,7 @@ type tailSamplingSpanProcessor struct {
 	sampledIDCache  cache.Cache[bool]
 	deleteChan      chan pcommon.TraceID
 	numTracesOnMap  *atomic.Uint64
+	samplingRates   map[string]int64
 }
 
 // spanAndScope a structure for holding information about span and its instrumentation scope.
@@ -119,6 +120,7 @@ func newTracesProcessor(ctx context.Context, settings component.TelemetrySetting
 	if tsp.policies == nil {
 		policyNames := map[string]bool{}
 		tsp.policies = make([]*policy, len(cfg.PolicyCfgs))
+		tsp.samplingRates = make(map[string]int64, len(cfg.PolicyCfgs))
 		for i := range cfg.PolicyCfgs {
 			policyCfg := &cfg.PolicyCfgs[i]
 
@@ -137,6 +139,32 @@ func newTracesProcessor(ctx context.Context, settings component.TelemetrySetting
 				attribute: metric.WithAttributes(attribute.String("policy", policyCfg.Name)),
 			}
 			tsp.policies[i] = p
+			if policyCfg.Type == Probabilistic {
+				tsp.samplingRates[policyCfg.Name] = int64(100 / policyCfg.ProbabilisticCfg.SamplingPercentage)
+			} else if policyCfg.Type == And {
+				for j := range policyCfg.AndCfg.SubPolicyCfg {
+					subpolicyCfg := &policyCfg.AndCfg.SubPolicyCfg[j]
+					if subpolicyCfg.Type == Probabilistic {
+						tsp.samplingRates[policyCfg.Name] = int64(100 / subpolicyCfg.ProbabilisticCfg.SamplingPercentage)
+						//tsp.logger.Debug("WE FOUND A PROBABILISTIC SUBPOLICY!!!!!!")
+					}
+				}
+			} else {
+				//tsp.logger.Debug("policy type is: ", zap.Any("policy", policyCfg.Type))
+				//tsp.logger.Debug("policy name is: ", zap.Any("policy", policyCfg.Name))
+				//tsp.logger.Debug("policy subpolicy len is: ", zap.Int("len", len(policyCfg.AndCfg.SubPolicyCfg)))
+				/*for j := range policyCfg.AndCfg.SubPolicyCfg {
+					subpolicyCfg := &policyCfg.AndCfg.SubPolicyCfg[j]
+					tsp.logger.Debug("subpolicy name is:", zap.Any("subpolicy", subpolicyCfg.Name))
+					tsp.logger.Debug("subpolicy type is:", zap.Any("subpolicy", subpolicyCfg.Type))
+					if subpolicyCfg.Type == Probabilistic {
+						tsp.logger.Debug("WE FOUND A PROBABILISTIC SUBPOLICY!!!!!!")
+					} else {
+						tsp.logger.Debug(("not a probabilistic subpolicy"))
+					}
+				}*/
+				tsp.samplingRates[policyCfg.Name] = 1
+			}
 		}
 	}
 
@@ -292,6 +320,7 @@ func (tsp *tailSamplingSpanProcessor) makeDecision(id pcommon.TraceID, trace *sa
 		sampling.InvertSampled:    false,
 		sampling.InvertNotSampled: false,
 	}
+	samplingRate := int64(1_000_000_000_000)
 
 	ctx := context.Background()
 	// Check all policies before making a final decision
@@ -311,6 +340,9 @@ func (tsp *tailSamplingSpanProcessor) makeDecision(id pcommon.TraceID, trace *sa
 
 			samplingDecision[decision] = true
 		}
+		if decision == sampling.Sampled {
+			samplingRate = min(tsp.samplingRates[p.name], samplingRate)
+		}
 	}
 
 	// InvertNotSampled takes precedence over any other decision
@@ -321,6 +353,20 @@ func (tsp *tailSamplingSpanProcessor) makeDecision(id pcommon.TraceID, trace *sa
 		finalDecision = sampling.Sampled
 	case samplingDecision[sampling.InvertSampled] && !samplingDecision[sampling.NotSampled]:
 		finalDecision = sampling.Sampled
+	}
+
+	if finalDecision == sampling.Sampled {
+		for i := 0; i < trace.ReceivedBatches.ResourceSpans().Len(); i++ {
+			rs := trace.ReceivedBatches.ResourceSpans().At(i)
+			for j := 0; j < rs.ScopeSpans().Len(); j++ {
+				ss := rs.ScopeSpans().At(j)
+				for k := 0; k < rs.ScopeSpans().At(j).Spans().Len(); k++ {
+					span := ss.Spans().At(k)
+					span.Attributes().PutInt("SampleRate", samplingRate)
+				}
+			}
+		}
+
 	}
 
 	return finalDecision
