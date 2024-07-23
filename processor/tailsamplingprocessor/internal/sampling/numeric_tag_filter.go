@@ -39,14 +39,26 @@ func (naf *numericAttributeFilter) Evaluate(_ context.Context, _ pcommon.TraceID
 	defer trace.Unlock()
 	batches := trace.ReceivedBatches
 
+	if naf.invertMatch {
+		// Invert Match returns true by default, except when key and value are matched
+		return invertHasResourceOrSpanWithCondition(batches, func(span ptrace.Span) bool {
+			if v, ok := span.Attributes().Get(naf.key); ok {
+				value := v.Int()
+				if value >= naf.minValue && value <= naf.maxValue {
+					return false
+				}
+			}
+			return true
+		}), nil
+	}
+
 	return hasSpanWithCondition(batches, func(span ptrace.Span) bool {
 		if v, ok := span.Attributes().Get(naf.key); ok {
 			value := v.Int()
 			if value >= naf.minValue && value <= naf.maxValue {
-				return !(naf.invertMatch)
-
+				return true
 			}
 		}
-		return naf.invertMatch
+		return false
 	}), nil
 }

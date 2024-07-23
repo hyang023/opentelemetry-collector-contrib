@@ -147,6 +147,8 @@ func newTracesProcessor(ctx context.Context, settings component.TelemetrySetting
 					if subpolicyCfg.Type == Probabilistic {
 						tsp.samplingRates[policyCfg.Name] = int64(100 / subpolicyCfg.ProbabilisticCfg.SamplingPercentage)
 						//tsp.logger.Debug("WE FOUND A PROBABILISTIC SUBPOLICY!!!!!!")
+					} else {
+						tsp.samplingRates[policyCfg.Name] = 1
 					}
 				}
 			} else {

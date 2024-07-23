@@ -53,6 +53,18 @@ func invertHasResourceOrSpanWithCondition(
 }
 
 // hasSpanWithCondition iterates through all the instrumentation library spans until any callback returns true.
+func invertHasSpanWithCondition(td ptrace.Traces, shouldSample func(span ptrace.Span) bool) Decision {
+	for i := 0; i < td.ResourceSpans().Len(); i++ {
+		rs := td.ResourceSpans().At(i)
+
+		if !hasInstrumentationLibrarySpanWithCondition(rs.ScopeSpans(), shouldSample) {
+			return InvertNotSampled
+		}
+	}
+	return InvertSampled
+}
+
+// hasSpanWithCondition iterates through all the instrumentation library spans until any callback returns true.
 func hasSpanWithCondition(td ptrace.Traces, shouldSample func(span ptrace.Span) bool) Decision {
 	for i := 0; i < td.ResourceSpans().Len(); i++ {
 		rs := td.ResourceSpans().At(i)
