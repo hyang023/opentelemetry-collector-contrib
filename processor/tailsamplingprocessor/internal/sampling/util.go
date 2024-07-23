@@ -57,7 +57,7 @@ func invertHasSpanWithCondition(td ptrace.Traces, shouldSample func(span ptrace.
 	for i := 0; i < td.ResourceSpans().Len(); i++ {
 		rs := td.ResourceSpans().At(i)
 
-		if !hasInstrumentationLibrarySpanWithCondition(rs.ScopeSpans(), shouldSample) {
+		if !invertHasInstrumentationLibrarySpanWithCondition(rs.ScopeSpans(), shouldSample) {
 			return InvertNotSampled
 		}
 	}

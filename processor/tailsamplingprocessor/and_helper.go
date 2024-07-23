@@ -5,14 +5,17 @@ package tailsamplingprocessor // import "github.com/open-telemetry/opentelemetry
 
 import (
 	"go.opentelemetry.io/collector/component"
+	"go.uber.org/zap"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/processor/tailsamplingprocessor/internal/sampling"
 )
 
 func getNewAndPolicy(settings component.TelemetrySettings, config *AndCfg) (sampling.PolicyEvaluator, error) {
+	settings.Logger.Debug("HELLO FROM AND_HELPER")
 	subPolicyEvaluators := make([]sampling.PolicyEvaluator, len(config.SubPolicyCfg))
 	for i := range config.SubPolicyCfg {
 		policyCfg := &config.SubPolicyCfg[i]
+		settings.Logger.Debug("SUBPOLICY NAME:", zap.Any("subpolicy_name", policyCfg.Name))
 		policy, err := getAndSubPolicyEvaluator(settings, policyCfg)
 		if err != nil {
 			return nil, err

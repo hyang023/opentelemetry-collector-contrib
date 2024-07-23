@@ -41,7 +41,7 @@ func (naf *numericAttributeFilter) Evaluate(_ context.Context, _ pcommon.TraceID
 
 	if naf.invertMatch {
 		// Invert Match returns true by default, except when key and value are matched
-		return invertHasResourceOrSpanWithCondition(batches, func(span ptrace.Span) bool {
+		return invertHasSpanWithCondition(batches, func(span ptrace.Span) bool {
 			if v, ok := span.Attributes().Get(naf.key); ok {
 				value := v.Int()
 				if value >= naf.minValue && value <= naf.maxValue {

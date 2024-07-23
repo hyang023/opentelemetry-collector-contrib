@@ -140,31 +140,37 @@ func newTracesProcessor(ctx context.Context, settings component.TelemetrySetting
 			}
 			tsp.policies[i] = p
 			if policyCfg.Type == Probabilistic {
-				tsp.samplingRates[policyCfg.Name] = int64(100 / policyCfg.ProbabilisticCfg.SamplingPercentage)
-			} else if policyCfg.Type == And {
-				for j := range policyCfg.AndCfg.SubPolicyCfg {
-					subpolicyCfg := &policyCfg.AndCfg.SubPolicyCfg[j]
-					if subpolicyCfg.Type == Probabilistic {
-						tsp.samplingRates[policyCfg.Name] = int64(100 / subpolicyCfg.ProbabilisticCfg.SamplingPercentage)
-						//tsp.logger.Debug("WE FOUND A PROBABILISTIC SUBPOLICY!!!!!!")
-					} else {
-						tsp.samplingRates[policyCfg.Name] = 1
-					}
-				}
-			} else {
 				//tsp.logger.Debug("policy type is: ", zap.Any("policy", policyCfg.Type))
 				//tsp.logger.Debug("policy name is: ", zap.Any("policy", policyCfg.Name))
-				//tsp.logger.Debug("policy subpolicy len is: ", zap.Int("len", len(policyCfg.AndCfg.SubPolicyCfg)))
-				/*for j := range policyCfg.AndCfg.SubPolicyCfg {
+				tsp.logger.Debug("WE FOUND A PROBABILISTIC POLICY!!!!!!")
+				tsp.samplingRates[policyCfg.Name] = int64(100 / policyCfg.ProbabilisticCfg.SamplingPercentage)
+			} else if policyCfg.Type == And {
+				tsp.logger.Debug("WE FOUND AN AND POLICY!!!!!!")
+				//tsp.logger.Debug("policy type is: ", zap.Any("policy", policyCfg.Type))
+				tsp.logger.Debug("policy name is: ", zap.Any("policy", policyCfg.Name))
+				tsp.logger.Debug("policy subpolicy len is: ", zap.Int("len", len(policyCfg.AndCfg.SubPolicyCfg)))
+				tsp.logger.Debug("policy subpolicy print out: ", zap.Any("subpolicies", policyCfg.AndCfg.SubPolicyCfg))
+				for j := range policyCfg.AndCfg.SubPolicyCfg {
 					subpolicyCfg := &policyCfg.AndCfg.SubPolicyCfg[j]
 					tsp.logger.Debug("subpolicy name is:", zap.Any("subpolicy", subpolicyCfg.Name))
 					tsp.logger.Debug("subpolicy type is:", zap.Any("subpolicy", subpolicyCfg.Type))
 					if subpolicyCfg.Type == Probabilistic {
+						tsp.samplingRates[policyCfg.Name] = int64(100 / subpolicyCfg.ProbabilisticCfg.SamplingPercentage)
 						tsp.logger.Debug("WE FOUND A PROBABILISTIC SUBPOLICY!!!!!!")
+					} else if subpolicyCfg.Type == NumericAttribute {
+						tsp.logger.Debug("FOUND A NUMERIC SUBPOLICY!!!!!!")
+						tsp.logger.Debug("NAME: ", zap.Any("subpolicy", subpolicyCfg.Name))
 					} else {
+						tsp.samplingRates[policyCfg.Name] = 1
 						tsp.logger.Debug(("not a probabilistic subpolicy"))
 					}
-				}*/
+				}
+			} else {
+				if policyCfg.Type == NumericAttribute {
+					tsp.logger.Debug("WE FOUND A NUMERIC FILTER POLICY!!!!!!")
+				}
+				tsp.logger.Debug("policy type is: ", zap.Any("policy", policyCfg.Type))
+				tsp.logger.Debug("policy name is: ", zap.Any("policy", policyCfg.Name))
 				tsp.samplingRates[policyCfg.Name] = 1
 			}
 		}
