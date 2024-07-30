@@ -142,27 +142,18 @@ func newTracesProcessor(ctx context.Context, settings component.TelemetrySetting
 			if policyCfg.Type == Probabilistic {
 				tsp.samplingRates[policyCfg.Name] = int64(100 / policyCfg.ProbabilisticCfg.SamplingPercentage)
 			} else if policyCfg.Type == And {
+				sampleRateSet := false
 				for j := range policyCfg.AndCfg.SubPolicyCfg {
 					subpolicyCfg := &policyCfg.AndCfg.SubPolicyCfg[j]
 					if subpolicyCfg.Type == Probabilistic {
 						tsp.samplingRates[policyCfg.Name] = int64(100 / subpolicyCfg.ProbabilisticCfg.SamplingPercentage)
-						//tsp.logger.Debug("WE FOUND A PROBABILISTIC SUBPOLICY!!!!!!")
+						sampleRateSet = true
 					}
 				}
+				if !sampleRateSet {
+					tsp.samplingRates[policyCfg.Name] = 1
+				}
 			} else {
-				//tsp.logger.Debug("policy type is: ", zap.Any("policy", policyCfg.Type))
-				//tsp.logger.Debug("policy name is: ", zap.Any("policy", policyCfg.Name))
-				//tsp.logger.Debug("policy subpolicy len is: ", zap.Int("len", len(policyCfg.AndCfg.SubPolicyCfg)))
-				/*for j := range policyCfg.AndCfg.SubPolicyCfg {
-					subpolicyCfg := &policyCfg.AndCfg.SubPolicyCfg[j]
-					tsp.logger.Debug("subpolicy name is:", zap.Any("subpolicy", subpolicyCfg.Name))
-					tsp.logger.Debug("subpolicy type is:", zap.Any("subpolicy", subpolicyCfg.Type))
-					if subpolicyCfg.Type == Probabilistic {
-						tsp.logger.Debug("WE FOUND A PROBABILISTIC SUBPOLICY!!!!!!")
-					} else {
-						tsp.logger.Debug(("not a probabilistic subpolicy"))
-					}
-				}*/
 				tsp.samplingRates[policyCfg.Name] = 1
 			}
 		}
@@ -302,7 +293,7 @@ func (tsp *tailSamplingSpanProcessor) samplingPolicyOnTick() {
 			//lets make a int64 value to track the samplerate
 			//lets also make a bool value to track if there are spans without sample rate
 			//we are assuming for now that sample rate is consistent, but this can be adjusted to find a specific (e.g. min or max) sample rate
-			samplingRate := int64(0)
+			samplingRate := int64(-10)
 			missingSamplingRate := false
 
 			//plan: first check if samplerate exists in all spans, making note of
@@ -316,7 +307,9 @@ func (tsp *tailSamplingSpanProcessor) samplingPolicyOnTick() {
 					for j := 0; j < ils.Spans().Len(); j++ {
 						span := ils.Spans().At(j)
 						if v, ok := span.Attributes().Get("SampleRate"); ok {
-							samplingRate = v.Int()
+							if v.Int() > 0 && samplingRate <= 0 {
+								samplingRate = v.Int()
+							}
 						} else if !ok {
 							missingSamplingRate = true
 						}
