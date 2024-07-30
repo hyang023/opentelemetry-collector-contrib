@@ -298,6 +298,47 @@ func (tsp *tailSamplingSpanProcessor) samplingPolicyOnTick() {
 		trace.Unlock()
 
 		if decision == sampling.Sampled {
+
+			//lets make a int64 value to track the samplerate
+			//lets also make a bool value to track if there are spans without sample rate
+			//we are assuming for now that sample rate is consistent, but this can be adjusted to find a specific (e.g. min or max) sample rate
+			samplingRate := int64(0)
+			missingSamplingRate := false
+
+			//plan: first check if samplerate exists in all spans, making note of
+			//we can borrow code from hasSpanWithCondition, hasInstrumentatinLibrarySpanWithCondition and hasSpanWithCondition for this
+
+			//iterate through the spans to look for samplerate value and spans missing sample rate
+			for i := 0; i < trace.ReceivedBatches.ResourceSpans().Len() && (!missingSamplingRate || samplingRate == 0); i++ {
+				rs := trace.ReceivedBatches.ResourceSpans().At(i)
+				for k := 0; k < rs.ScopeSpans().Len(); k++ {
+					ils := rs.ScopeSpans().At(k)
+					for j := 0; j < ils.Spans().Len(); j++ {
+						span := ils.Spans().At(j)
+						if v, ok := span.Attributes().Get("SampleRate"); ok {
+							samplingRate = v.Int()
+						} else if !ok {
+							missingSamplingRate = true
+						}
+					}
+				}
+			}
+
+			//if missingSamplingRate, iterate through again, setting the attribute where missing
+			if missingSamplingRate && samplingRate > 0 {
+				for i := 0; i < trace.ReceivedBatches.ResourceSpans().Len(); i++ {
+					rs := trace.ReceivedBatches.ResourceSpans().At(i)
+					for j := 0; j < rs.ScopeSpans().Len(); j++ {
+						ss := rs.ScopeSpans().At(j)
+						for k := 0; k < ss.Spans().Len(); k++ {
+							span := ss.Spans().At(k)
+							span.Attributes().PutInt("SampleRate", samplingRate)
+						}
+					}
+				}
+
+			}
+
 			tsp.releaseSampledTrace(context.Background(), id, allSpans)
 		}
 	}
