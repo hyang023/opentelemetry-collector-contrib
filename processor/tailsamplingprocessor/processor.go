@@ -55,7 +55,7 @@ type tailSamplingSpanProcessor struct {
 	policyTicker    timeutils.TTicker
 	tickerFrequency time.Duration
 	decisionBatcher idbatcher.Batcher
-	sampledIDCache  cache.Cache[bool]
+	sampledIDCache  cache.Cache[int64]
 	deleteChan      chan pcommon.TraceID
 	numTracesOnMap  *atomic.Uint64
 	samplingRates   map[string]int64
@@ -89,9 +89,9 @@ func newTracesProcessor(ctx context.Context, settings component.TelemetrySetting
 	if err != nil {
 		return nil, err
 	}
-	sampledDecisions := cache.NewNopDecisionCache[bool]()
+	sampledDecisions := cache.NewNopDecisionCache[int64]()
 	if cfg.DecisionCache.SampledCacheSize > 0 {
-		sampledDecisions, err = cache.NewLRUDecisionCache[bool](cfg.DecisionCache.SampledCacheSize)
+		sampledDecisions, err = cache.NewLRUDecisionCache[int64](cfg.DecisionCache.SampledCacheSize)
 		if err != nil {
 			return nil, err
 		}
@@ -195,7 +195,7 @@ func withTickerFrequency(frequency time.Duration) Option {
 }
 
 // withSampledDecisionCache sets the cache which the processor uses to store recently sampled trace IDs.
-func withSampledDecisionCache(c cache.Cache[bool]) Option {
+func withSampledDecisionCache(c cache.Cache[int64]) Option {
 	return func(tsp *tailSamplingSpanProcessor) {
 		tsp.sampledIDCache = c
 	}
@@ -289,48 +289,6 @@ func (tsp *tailSamplingSpanProcessor) samplingPolicyOnTick() {
 		trace.Unlock()
 
 		if decision == sampling.Sampled {
-
-			//lets make a int64 value to track the samplerate
-			//lets also make a bool value to track if there are spans without sample rate
-			//we are assuming for now that sample rate is consistent, but this can be adjusted to find a specific (e.g. min or max) sample rate
-			samplingRate := int64(-10)
-			missingSamplingRate := false
-
-			//plan: first check if samplerate exists in all spans, making note of
-			//we can borrow code from hasSpanWithCondition, hasInstrumentatinLibrarySpanWithCondition and hasSpanWithCondition for this
-
-			//iterate through the spans to look for samplerate value and spans missing sample rate
-			for i := 0; i < trace.ReceivedBatches.ResourceSpans().Len() && (!missingSamplingRate || samplingRate == 0); i++ {
-				rs := trace.ReceivedBatches.ResourceSpans().At(i)
-				for k := 0; k < rs.ScopeSpans().Len(); k++ {
-					ils := rs.ScopeSpans().At(k)
-					for j := 0; j < ils.Spans().Len(); j++ {
-						span := ils.Spans().At(j)
-						if v, ok := span.Attributes().Get("SampleRate"); ok {
-							if v.Int() > 0 && samplingRate <= 0 {
-								samplingRate = v.Int()
-							}
-						} else if !ok {
-							missingSamplingRate = true
-						}
-					}
-				}
-			}
-
-			//if missingSamplingRate, iterate through again, setting the attribute where missing
-			if missingSamplingRate && samplingRate > 0 {
-				for i := 0; i < trace.ReceivedBatches.ResourceSpans().Len(); i++ {
-					rs := trace.ReceivedBatches.ResourceSpans().At(i)
-					for j := 0; j < rs.ScopeSpans().Len(); j++ {
-						ss := rs.ScopeSpans().At(j)
-						for k := 0; k < ss.Spans().Len(); k++ {
-							span := ss.Spans().At(k)
-							span.Attributes().PutInt("SampleRate", samplingRate)
-						}
-					}
-				}
-
-			}
 
 			tsp.releaseSampledTrace(context.Background(), id, allSpans)
 		}
@@ -551,7 +509,44 @@ func (tsp *tailSamplingSpanProcessor) dropTrace(traceID pcommon.TraceID, deletio
 // It additionally adds the trace ID to the cache of sampled trace IDs.
 // It does not (yet) delete the spans from the internal map.
 func (tsp *tailSamplingSpanProcessor) releaseSampledTrace(ctx context.Context, id pcommon.TraceID, td ptrace.Traces) {
-	tsp.sampledIDCache.Put(id, true)
+
+	samplingRateMissing, sampleRate := missingSampleRate(td)
+	if samplingRate, ok := tsp.sampledIDCache.Get(id); ok {
+		for i := 0; i < td.ResourceSpans().Len(); i++ {
+			rs := td.ResourceSpans().At(i)
+			for j := 0; j < rs.ScopeSpans().Len(); j++ {
+				ss := rs.ScopeSpans().At(j)
+				for k := 0; k < ss.Spans().Len(); k++ {
+					span := ss.Spans().At(k)
+					span.Attributes().PutInt("SampleRate", samplingRate)
+				}
+			}
+		}
+		sampleRate = samplingRate
+		//lets make a int64 value to track the samplerate
+		//lets also make a bool value to track if there are spans without sample rate
+		//we are assuming for now that sample rate is consistent, but this can be adjusted to find a specific (e.g. min or max) sample rate
+
+		//plan: first check if samplerate exists in all spans, making note of
+		//we can borrow code from hasSpanWithCondition, hasInstrumentatinLibrarySpanWithCondition and hasSpanWithCondition for this
+
+		//iterate through the spans to look for samplerate value and spans missing sample rate
+		//if missingSamplingRate, iterate through again, setting the attribute where missing
+	} else if samplingRateMissing {
+		for i := 0; i < td.ResourceSpans().Len(); i++ {
+			rs := td.ResourceSpans().At(i)
+			for j := 0; j < rs.ScopeSpans().Len(); j++ {
+				ss := rs.ScopeSpans().At(j)
+				for k := 0; k < ss.Spans().Len(); k++ {
+					span := ss.Spans().At(k)
+					span.Attributes().PutInt("SampleRate", samplingRate)
+				}
+			}
+		}
+		sampleRate = samplingRate
+	}
+
+	tsp.sampledIDCache.Put(id, sampleRate)
 	if err := tsp.nextConsumer.ConsumeTraces(ctx, td); err != nil {
 		tsp.logger.Warn(
 			"Error sending spans to destination",
@@ -578,4 +573,29 @@ func appendToTraces(dest ptrace.Traces, rss ptrace.ResourceSpans, spanAndScopes 
 			spanAndScope.span.CopyTo(sp)
 		}
 	}
+}
+
+func missingSampleRate(td ptrace.Traces) (bool, int64) {
+	sampleRateMissing := false
+	samplingRate := int64(0)
+	for i := 0; i < td.ResourceSpans().Len(); i++ {
+		rs := td.ResourceSpans().At(i)
+		for k := 0; k < rs.ScopeSpans().Len(); k++ {
+			ils := rs.ScopeSpans().At(k)
+			for j := 0; j < ils.Spans().Len(); j++ {
+				span := ils.Spans().At(j)
+				if v, ok := span.Attributes().Get("SampleRate"); ok {
+					if v.Int() > 0 && samplingRate <= 0 {
+						samplingRate = v.Int()
+					}
+				} else if !ok {
+					sampleRateMissing = true
+					if samplingRate > 0 {
+						return sampleRateMissing, samplingRate
+					}
+				}
+			}
+		}
+	}
+	return sampleRateMissing, samplingRate
 }
