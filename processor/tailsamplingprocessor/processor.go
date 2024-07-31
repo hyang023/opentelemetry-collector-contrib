@@ -289,8 +289,20 @@ func (tsp *tailSamplingSpanProcessor) samplingPolicyOnTick() {
 		trace.Unlock()
 
 		if decision == sampling.Sampled {
-
-			tsp.releaseSampledTrace(context.Background(), id, allSpans)
+			samplingRateMissing, sampleRate := missingSampleRate(allSpans)
+			if samplingRateMissing {
+				for i := 0; i < allSpans.ResourceSpans().Len(); i++ {
+					rs := allSpans.ResourceSpans().At(i)
+					for j := 0; j < rs.ScopeSpans().Len(); j++ {
+						ss := rs.ScopeSpans().At(j)
+						for k := 0; k < ss.Spans().Len(); k++ {
+							span := ss.Spans().At(k)
+							span.Attributes().PutInt("SampleRate", sampleRate)
+						}
+					}
+				}
+			}
+			tsp.releaseSampledTrace(context.Background(), id, allSpans, sampleRate)
 		}
 	}
 
@@ -399,10 +411,20 @@ func (tsp *tailSamplingSpanProcessor) processTraces(resourceSpans ptrace.Resourc
 	var newTraceIDs int64
 	for id, spans := range idToSpansAndScope {
 		// If the trace ID is in the sampled cache, short circuit the decision
-		if _, ok := tsp.sampledIDCache.Get(id); ok {
+		if samplingRate, ok := tsp.sampledIDCache.Get(id); ok {
 			traceTd := ptrace.NewTraces()
 			appendToTraces(traceTd, resourceSpans, spans)
-			tsp.releaseSampledTrace(tsp.ctx, id, traceTd)
+			for i := 0; i < traceTd.ResourceSpans().Len(); i++ {
+				rs := traceTd.ResourceSpans().At(i)
+				for j := 0; j < rs.ScopeSpans().Len(); j++ {
+					ss := rs.ScopeSpans().At(j)
+					for k := 0; k < ss.Spans().Len(); k++ {
+						span := ss.Spans().At(k)
+						span.Attributes().PutInt("SampleRate", samplingRate)
+					}
+				}
+			}
+			tsp.releaseSampledTrace(tsp.ctx, id, traceTd, samplingRate)
 			tsp.telemetry.ProcessorTailSamplingEarlyReleasesFromCacheDecision.Add(tsp.ctx, int64(len(spans)))
 			continue
 		}
@@ -459,7 +481,20 @@ func (tsp *tailSamplingSpanProcessor) processTraces(resourceSpans ptrace.Resourc
 				// Forward the spans to the policy destinations
 				traceTd := ptrace.NewTraces()
 				appendToTraces(traceTd, resourceSpans, spans)
-				tsp.releaseSampledTrace(tsp.ctx, id, traceTd)
+				samplingRateMissing, sampleRate := missingSampleRate(traceTd)
+				if samplingRateMissing {
+					for i := 0; i < traceTd.ResourceSpans().Len(); i++ {
+						rs := traceTd.ResourceSpans().At(i)
+						for j := 0; j < rs.ScopeSpans().Len(); j++ {
+							ss := rs.ScopeSpans().At(j)
+							for k := 0; k < ss.Spans().Len(); k++ {
+								span := ss.Spans().At(k)
+								span.Attributes().PutInt("SampleRate", sampleRate)
+							}
+						}
+					}
+				}
+				tsp.releaseSampledTrace(tsp.ctx, id, traceTd, sampleRate)
 			case sampling.NotSampled:
 				tsp.telemetry.ProcessorTailSamplingSamplingLateSpanAge.Record(tsp.ctx, int64(time.Since(actualData.DecisionTime)/time.Second))
 			default:
@@ -508,44 +543,7 @@ func (tsp *tailSamplingSpanProcessor) dropTrace(traceID pcommon.TraceID, deletio
 // releaseSampledTrace sends the trace data to the next consumer.
 // It additionally adds the trace ID to the cache of sampled trace IDs.
 // It does not (yet) delete the spans from the internal map.
-func (tsp *tailSamplingSpanProcessor) releaseSampledTrace(ctx context.Context, id pcommon.TraceID, td ptrace.Traces) {
-
-	samplingRateMissing, sampleRate := missingSampleRate(td)
-	if samplingRate, ok := tsp.sampledIDCache.Get(id); ok {
-		for i := 0; i < td.ResourceSpans().Len(); i++ {
-			rs := td.ResourceSpans().At(i)
-			for j := 0; j < rs.ScopeSpans().Len(); j++ {
-				ss := rs.ScopeSpans().At(j)
-				for k := 0; k < ss.Spans().Len(); k++ {
-					span := ss.Spans().At(k)
-					span.Attributes().PutInt("SampleRate", samplingRate)
-				}
-			}
-		}
-		sampleRate = samplingRate
-		//lets make a int64 value to track the samplerate
-		//lets also make a bool value to track if there are spans without sample rate
-		//we are assuming for now that sample rate is consistent, but this can be adjusted to find a specific (e.g. min or max) sample rate
-
-		//plan: first check if samplerate exists in all spans, making note of
-		//we can borrow code from hasSpanWithCondition, hasInstrumentatinLibrarySpanWithCondition and hasSpanWithCondition for this
-
-		//iterate through the spans to look for samplerate value and spans missing sample rate
-		//if missingSamplingRate, iterate through again, setting the attribute where missing
-	} else if samplingRateMissing {
-		for i := 0; i < td.ResourceSpans().Len(); i++ {
-			rs := td.ResourceSpans().At(i)
-			for j := 0; j < rs.ScopeSpans().Len(); j++ {
-				ss := rs.ScopeSpans().At(j)
-				for k := 0; k < ss.Spans().Len(); k++ {
-					span := ss.Spans().At(k)
-					span.Attributes().PutInt("SampleRate", samplingRate)
-				}
-			}
-		}
-		sampleRate = samplingRate
-	}
-
+func (tsp *tailSamplingSpanProcessor) releaseSampledTrace(ctx context.Context, id pcommon.TraceID, td ptrace.Traces, sampleRate int64) {
 	tsp.sampledIDCache.Put(id, sampleRate)
 	if err := tsp.nextConsumer.ConsumeTraces(ctx, td); err != nil {
 		tsp.logger.Warn(
