@@ -343,7 +343,7 @@ func TestLateArrivingSpanUsesDecisionCache(t *testing.T) {
 	}
 
 	// Use this instead of the default no-op cache
-	c, err := cache.NewLRUDecisionCache[bool](200)
+	c, err := cache.NewLRUDecisionCache[int64](200)
 	require.NoError(t, err)
 	p, err := newTracesProcessor(context.Background(), ct, nextConsumer, cfg, withDecisionBatcher(idb), withPolicies(policies), withSampledDecisionCache(c))
 	require.NoError(t, err)

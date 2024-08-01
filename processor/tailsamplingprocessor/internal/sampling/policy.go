@@ -26,6 +26,8 @@ type TraceData struct {
 	ReceivedBatches ptrace.Traces
 	// FinalDecision.
 	FinalDecision Decision
+	// SampleRate
+	SampleRate int64
 }
 
 // Decision gives the status of sampling decision.
