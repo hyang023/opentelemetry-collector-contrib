@@ -291,6 +291,7 @@ func (tsp *tailSamplingSpanProcessor) samplingPolicyOnTick() {
 		if decision == sampling.Sampled {
 			samplingRateMissing, sampleRate := missingSampleRate(allSpans)
 			if samplingRateMissing {
+				tsp.logger.Debug("SAMPLING POLICY ON TICK SAMPLERATE: ", zap.Any("sampleRate", sampleRate), zap.Any("traceid", id))
 				for i := 0; i < allSpans.ResourceSpans().Len(); i++ {
 					rs := allSpans.ResourceSpans().At(i)
 					for j := 0; j < rs.ScopeSpans().Len(); j++ {
@@ -412,6 +413,7 @@ func (tsp *tailSamplingSpanProcessor) processTraces(resourceSpans ptrace.Resourc
 	for id, spans := range idToSpansAndScope {
 		// If the trace ID is in the sampled cache, short circuit the decision
 		if samplingRate, ok := tsp.sampledIDCache.Get(id); ok {
+			tsp.logger.Debug("PROCESS TRACES SAMPLERATE FROM CACHE: ", zap.Any("sampleRate", samplingRate), zap.Any("traceid", id))
 			traceTd := ptrace.NewTraces()
 			appendToTraces(traceTd, resourceSpans, spans)
 			for i := 0; i < traceTd.ResourceSpans().Len(); i++ {
@@ -483,6 +485,7 @@ func (tsp *tailSamplingSpanProcessor) processTraces(resourceSpans ptrace.Resourc
 				appendToTraces(traceTd, resourceSpans, spans)
 				samplingRateMissing, sampleRate := missingSampleRate(traceTd)
 				if samplingRateMissing {
+					tsp.logger.Debug("PROCESS TRACES SAMPLERATE FROM MISSINGSAMPLERATE: ", zap.Any("sampleRate", sampleRate), zap.Any("traceID", id))
 					for i := 0; i < traceTd.ResourceSpans().Len(); i++ {
 						rs := traceTd.ResourceSpans().At(i)
 						for j := 0; j < rs.ScopeSpans().Len(); j++ {
@@ -544,6 +547,7 @@ func (tsp *tailSamplingSpanProcessor) dropTrace(traceID pcommon.TraceID, deletio
 // It additionally adds the trace ID to the cache of sampled trace IDs.
 // It does not (yet) delete the spans from the internal map.
 func (tsp *tailSamplingSpanProcessor) releaseSampledTrace(ctx context.Context, id pcommon.TraceID, td ptrace.Traces, sampleRate int64) {
+	tsp.logger.Debug("RELEASE SAMPLED TRACE SAMPLERATE PUT IN CACHE: ", zap.Any("sampleRate", sampleRate), zap.Any("traceid", id))
 	tsp.sampledIDCache.Put(id, sampleRate)
 	if err := tsp.nextConsumer.ConsumeTraces(ctx, td); err != nil {
 		tsp.logger.Warn(
